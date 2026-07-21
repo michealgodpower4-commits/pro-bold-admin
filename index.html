@@ -19,8 +19,6 @@
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .gradient-bg { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .glass { background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); }
-        .notification-badge { animation: pulse 2s infinite; }
-        @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.1); } }
         .table-row:hover { background-color: #f8fafc; }
         .btn-primary { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
@@ -39,9 +37,11 @@
         .sidebar-item.active { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
         .progress-bar { height: 8px; border-radius: 4px; background: #e2e8f0; overflow: hidden; }
         .progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); transition: width 0.5s ease; }
-        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 2000; display: flex; justify-content: center; align-items: center; flex-direction: column; }
+        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); z-index: 2000; display: flex; justify-content: center; align-items: center; flex-direction: column; }
         .spinner { width: 50px; height: 50px; border: 4px solid #e2e8f0; border-top: 4px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .error-box { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+        .success-box { background: #dcfce7; border: 1px solid #bbf7d0; color: #166534; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 14px; }
     </style>
 <base target="_blank">
 </head>
@@ -50,6 +50,7 @@
 <div id="loadingScreen" class="loading-overlay">
     <div class="spinner"></div>
     <p class="mt-4 text-gray-600 font-medium">Loading Pro Bold Admin...</p>
+    <p id="loadingStatus" class="mt-2 text-sm text-gray-400">Initializing...</p>
 </div>
 
 <div id="loginScreen" class="login-bg flex items-center justify-center p-4 hidden">
@@ -74,7 +75,7 @@
                 <i class="fas fa-sign-in-alt mr-2"></i> Login
             </button>
         </form>
-        <p id="loginError" class="text-red-500 text-sm mt-4 text-center hidden"></p>
+        <div id="loginMessages"></div>
         <div class="mt-6 text-center text-sm text-gray-500">
             <p>Default: admin@probold.com / admin123</p>
         </div>
@@ -439,29 +440,191 @@
 </div>
 
 <script>
-// Firebase Config
-const firebaseConfig = {
-    apiKey: "AIzaSyB3HlXp-umf_gyhCYYEDBckuq607C7pc4A",
-    authDomain: "pro-bold-admin-b135a.firebaseapp.com",
-    projectId: "pro-bold-admin-b135a",
-    storageBucket: "pro-bold-admin-b135a.firebasestorage.app",
-    messagingSenderId: "429311470657",
-    appId: "1:429311470657:web:1c0dc9c029272fe1396ac0"
+// ===== FALLBACK DEMO MODE =====
+// If Firebase fails to load, the app works in demo mode with localStorage
+var DEMO_MODE = false;
+var db = null;
+var auth = null;
+
+// Try to initialize Firebase
+try {
+    var firebaseConfig = {
+        apiKey: "AIzaSyB3HlXp-umf_gyhCYYEDBckuq607C7pc4A",
+        authDomain: "pro-bold-admin-b135a.firebaseapp.com",
+        projectId: "pro-bold-admin-b135a",
+        storageBucket: "pro-bold-admin-b135a.firebasestorage.app",
+        messagingSenderId: "429311470657",
+        appId: "1:429311470657:web:1c0dc9c029272fe1396ac0"
+    };
+
+    if (typeof firebase !== 'undefined') {
+        firebase.initializeApp(firebaseConfig);
+        auth = firebase.auth();
+        db = firebase.firestore();
+        console.log('Firebase initialized successfully');
+    } else {
+        throw new Error('Firebase not loaded');
+    }
+} catch (e) {
+    console.warn('Firebase failed to initialize, switching to DEMO mode:', e.message);
+    DEMO_MODE = true;
+    db = createMockDB();
+    auth = createMockAuth();
+}
+
+// Mock Auth for demo mode
+function createMockAuth() {
+    var mockUser = null;
+    var callbacks = [];
+    return {
+        onAuthStateChanged: function(cb) {
+            callbacks.push(cb);
+            setTimeout(function() { cb(mockUser); }, 500);
+            return function() {};
+        },
+        signInWithEmailAndPassword: function(email, password) {
+            return new Promise(function(resolve, reject) {
+                setTimeout(function() {
+                    if (email === 'admin@probold.com' && password === 'admin123') {
+                        mockUser = { email: email, uid: 'demo-admin-123' };
+                        callbacks.forEach(function(cb) { cb(mockUser); });
+                        resolve({ user: mockUser });
+                    } else {
+                        reject(new Error('Invalid email or password'));
+                    }
+                }, 500);
+            });
+        },
+        signOut: function() {
+            return new Promise(function(resolve) {
+                mockUser = null;
+                callbacks.forEach(function(cb) { cb(null); });
+                resolve();
+            });
+        }
+    };
+}
+
+// Mock Firestore for demo mode
+function createMockDB() {
+    var data = {
+        users: JSON.parse(localStorage.getItem('demo_users') || '[]'),
+        transactions: JSON.parse(localStorage.getItem('demo_transactions') || '[]'),
+        investments: JSON.parse(localStorage.getItem('demo_investments') || '[]'),
+        plans: JSON.parse(localStorage.getItem('demo_plans') || '[]'),
+        notifications: JSON.parse(localStorage.getItem('demo_notifications') || '[]')
+    };
+
+    if (data.plans.length === 0) {
+        data.plans = [
+            { id: 'plan1', name: 'Starter Plan', minAmount: 100, maxAmount: 999, dailyReturn: 2.5, duration: 30, createdAt: { toDate: function() { return new Date(); } } },
+            { id: 'plan2', name: 'Gold Plan', minAmount: 1000, maxAmount: 4999, dailyReturn: 3.5, duration: 45, createdAt: { toDate: function() { return new Date(); } } },
+            { id: 'plan3', name: 'Platinum Plan', minAmount: 5000, maxAmount: 50000, dailyReturn: 5, duration: 60, createdAt: { toDate: function() { return new Date(); } } }
+        ];
+        saveDemoData();
+    }
+
+    function saveDemoData() {
+        localStorage.setItem('demo_users', JSON.stringify(data.users));
+        localStorage.setItem('demo_transactions', JSON.stringify(data.transactions));
+        localStorage.setItem('demo_investments', JSON.stringify(data.investments));
+        localStorage.setItem('demo_plans', JSON.stringify(data.plans));
+        localStorage.setItem('demo_notifications', JSON.stringify(data.notifications));
+    }
+
+    return {
+        collection: function(name) {
+            return {
+                add: function(docData) {
+                    return new Promise(function(resolve) {
+                        var id = name + '_' + Date.now();
+                        var doc = { id: id };
+                        for (var key in docData) { doc[key] = docData[key]; }
+                        if (!doc.createdAt) doc.createdAt = { toDate: function() { return new Date(); } };
+                        data[name].push(doc);
+                        saveDemoData();
+                        resolve({ id: id });
+                    });
+                },
+                get: function() {
+                    return new Promise(function(resolve) {
+                        resolve({
+                            empty: data[name].length === 0,
+                            forEach: function(cb) {
+                                data[name].forEach(function(doc) { cb({ id: doc.id, data: function() { return doc; } }); });
+                            }
+                        });
+                    });
+                },
+                orderBy: function() { return this; },
+                doc: function(id) {
+                    return {
+                        get: function() {
+                            return new Promise(function(resolve) {
+                                var doc = data[name].find(function(d) { return d.id === id; });
+                                resolve({ exists: !!doc, data: function() { return doc; } });
+                            });
+                        },
+                        update: function(updates) {
+                            return new Promise(function(resolve) {
+                                var idx = data[name].findIndex(function(d) { return d.id === id; });
+                                if (idx !== -1) {
+                                    for (var key in updates) { data[name][idx][key] = updates[key]; }
+                                    saveDemoData();
+                                }
+                                resolve();
+                            });
+                        },
+                        delete: function() {
+                            return new Promise(function(resolve) {
+                                data[name] = data[name].filter(function(d) { return d.id !== id; });
+                                saveDemoData();
+                                resolve();
+                            });
+                        },
+                        set: function(docData) {
+                            return new Promise(function(resolve) {
+                                var idx = data[name].findIndex(function(d) { return d.id === id; });
+                                if (idx !== -1) {
+                                    data[name][idx] = docData;
+                                    data[name][idx].id = id;
+                                } else {
+                                    var newDoc = { id: id };
+                                    for (var key in docData) { newDoc[key] = docData[key]; }
+                                    data[name].push(newDoc);
+                                }
+                                saveDemoData();
+                                resolve();
+                            });
+                        }
+                    };
+                }
+            };
+        }
+    };
+}
+
+// FieldValue for demo mode
+var FieldValue = {
+    serverTimestamp: function() {
+        return { toDate: function() { return new Date(); } };
+    }
 };
 
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db = firebase.firestore();
+// ===== APP STATE =====
+var currentUser = null;
+var users = [];
+var transactions = [];
+var investments = [];
+var plans = [];
+var notifications = [];
+var currentFilter = 'all';
 
-let currentUser = null;
-let users = [];
-let transactions = [];
-let investments = [];
-let plans = [];
-let notifications = [];
-let currentFilter = 'all';
-
+// ===== INIT =====
 document.addEventListener('DOMContentLoaded', function() {
+    var statusEl = document.getElementById('loadingStatus');
+    if (statusEl) statusEl.textContent = DEMO_MODE ? 'Running in Demo Mode (Firebase unavailable)' : 'Connecting to Firebase...';
+
     auth.onAuthStateChanged(function(user) {
         document.getElementById('loadingScreen').classList.add('hidden');
         if (user) {
@@ -472,6 +635,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showLogin();
         }
     });
+
     setupForms();
     loadSettings();
 });
@@ -494,13 +658,15 @@ function setupForms() {
             e.preventDefault();
             var email = document.getElementById('loginEmail').value;
             var password = document.getElementById('loginPassword').value;
-            var errorEl = document.getElementById('loginError');
-            auth.signInWithEmailAndPassword(email, password).then(function() {
-                errorEl.classList.add('hidden');
-            }).catch(function(error) {
-                errorEl.textContent = 'Login failed: ' + error.message;
-                errorEl.classList.remove('hidden');
-            });
+            var msgEl = document.getElementById('loginMessages');
+
+            auth.signInWithEmailAndPassword(email, password)
+                .then(function() {
+                    msgEl.innerHTML = '';
+                })
+                .catch(function(error) {
+                    msgEl.innerHTML = '<div class="error-box">Login failed: ' + error.message + '</div>';
+                });
         });
     }
 
@@ -514,7 +680,7 @@ function setupForms() {
                 phone: document.getElementById('userPhone').value,
                 balance: parseFloat(document.getElementById('userBalance').value) || 0,
                 status: document.getElementById('userStatus').value,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: FieldValue.serverTimestamp()
             }).then(function() {
                 closeModal('addUserModal');
                 addUserForm.reset();
@@ -555,7 +721,7 @@ function setupForms() {
                 maxAmount: parseFloat(document.getElementById('planMax').value),
                 dailyReturn: parseFloat(document.getElementById('planReturn').value),
                 duration: parseInt(document.getElementById('planDuration').value),
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: FieldValue.serverTimestamp()
             }).then(function() {
                 closeModal('addPlanModal');
                 addPlanForm.reset();
@@ -575,7 +741,7 @@ function setupForms() {
                 message: document.getElementById('notifMessage').value,
                 type: document.getElementById('notifType').value,
                 read: false,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: FieldValue.serverTimestamp()
             }).then(function() {
                 closeModal('addNotificationModal');
                 addNotificationForm.reset();
@@ -609,7 +775,7 @@ function setupForms() {
                 duration: plan ? plan.duration : 0,
                 progress: 0,
                 status: 'active',
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                createdAt: FieldValue.serverTimestamp()
             }).then(function() {
                 closeModal('addInvestmentModal');
                 addInvestmentForm.reset();
@@ -682,7 +848,7 @@ function loadAllData() {
 }
 
 function loadUsers() {
-    db.collection('users').orderBy('createdAt', 'desc').get().then(function(snapshot) {
+    db.collection('users').get().then(function(snapshot) {
         users = [];
         snapshot.forEach(function(doc) { users.push({ id: doc.id, ...doc.data() }); });
         renderUsers();
@@ -701,7 +867,7 @@ function renderUsers() {
 
     tbody.innerHTML = users.map(function(user) {
         var initial = user.name ? user.name.charAt(0).toUpperCase() : 'U';
-        var dateStr = user.createdAt ? new Date(user.createdAt.toDate()).toLocaleDateString() : '-';
+        var dateStr = user.createdAt && user.createdAt.toDate ? new Date(user.createdAt.toDate()).toLocaleDateString() : '-';
         var statusClass = user.status === 'active' ? 'status-active' : user.status === 'pending' ? 'status-pending' : 'status-inactive';
         return '<tr class="table-row border-b border-gray-100">' +
             '<td class="px-4 md:px-6 py-4"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-sm font-bold">' + initial + '</div><span class="font-medium text-gray-800">' + (user.name || 'Unknown') + '</span></div></td>' +
@@ -717,7 +883,7 @@ function renderUsers() {
         var recent = users.slice(0, 5);
         recentList.innerHTML = recent.length ? recent.map(function(user) {
             var initial = user.name ? user.name.charAt(0).toUpperCase() : 'U';
-            var dateStr = user.createdAt ? new Date(user.createdAt.toDate()).toLocaleDateString() : '-';
+            var dateStr = user.createdAt && user.createdAt.toDate ? new Date(user.createdAt.toDate()).toLocaleDateString() : '-';
             return '<div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-sm font-bold">' + initial + '</div><div><p class="font-medium text-sm">' + (user.name || 'Unknown') + '</p><p class="text-xs text-gray-500">' + (user.email || '-') + '</p></div></div><span class="text-xs text-gray-500">' + dateStr + '</span></div>';
         }).join('') : '<p class="text-gray-500 text-sm">No users yet</p>';
     }
@@ -753,7 +919,7 @@ function deleteUser(userId) {
 }
 
 function loadTransactions() {
-    db.collection('transactions').orderBy('createdAt', 'desc').get().then(function(snapshot) {
+    db.collection('transactions').get().then(function(snapshot) {
         transactions = [];
         snapshot.forEach(function(doc) { transactions.push({ id: doc.id, ...doc.data() }); });
         renderTransactions();
@@ -775,7 +941,7 @@ function renderTransactions() {
         var typeClass = tx.type === 'deposit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700';
         var typeIcon = tx.type === 'deposit' ? 'fa-arrow-down text-green-600' : 'fa-arrow-up text-red-600';
         var statusClass = tx.status === 'approved' ? 'status-active' : tx.status === 'pending' ? 'status-pending' : 'status-inactive';
-        var dateStr = tx.createdAt ? new Date(tx.createdAt.toDate()).toLocaleDateString() : '-';
+        var dateStr = tx.createdAt && tx.createdAt.toDate ? new Date(tx.createdAt.toDate()).toLocaleDateString() : '-';
         var actions = tx.status === 'pending' ? 
             '<button onclick="approveTransaction('' + tx.id + '')" class="text-green-600 hover:text-green-800 mr-2"><i class="fas fa-check"></i></button><button onclick="rejectTransaction('' + tx.id + '')" class="text-red-600 hover:text-red-800"><i class="fas fa-times"></i></button>' : 
             '<span class="text-gray-400">-</span>';
@@ -821,7 +987,7 @@ function rejectTransaction(txId) {
 }
 
 function loadInvestments() {
-    db.collection('investments').orderBy('createdAt', 'desc').get().then(function(snapshot) {
+    db.collection('investments').get().then(function(snapshot) {
         investments = [];
         snapshot.forEach(function(doc) { investments.push({ id: doc.id, ...doc.data() }); });
         renderInvestments();
@@ -841,7 +1007,7 @@ function renderInvestments() {
 }
 
 function loadPlans() {
-    db.collection('plans').orderBy('createdAt', 'desc').get().then(function(snapshot) {
+    db.collection('plans').get().then(function(snapshot) {
         plans = [];
         snapshot.forEach(function(doc) { plans.push({ id: doc.id, ...doc.data() }); });
         renderPlans();
@@ -855,7 +1021,7 @@ function renderPlans() {
     var list = document.getElementById('plansList');
     if (!list) return;
     list.innerHTML = plans.length ? plans.map(function(plan) {
-        var dateStr = plan.createdAt ? new Date(plan.createdAt.toDate()).toLocaleDateString() : '-';
+        var dateStr = plan.createdAt && plan.createdAt.toDate ? new Date(plan.createdAt.toDate()).toLocaleDateString() : '-';
         return '<div class="bg-white rounded-xl border border-gray-200 p-6 card-hover"><div class="flex justify-between items-start mb-4"><h3 class="font-bold text-lg text-gray-800">' + (plan.name || 'Unnamed Plan') + '</h3><button onclick="deletePlan('' + plan.id + '')" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button></div><div class="space-y-2 mb-4"><div class="flex justify-between text-sm"><span class="text-gray-500">Min Investment</span><span class="font-medium">$' + (plan.minAmount || 0).toLocaleString() + '</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Max Investment</span><span class="font-medium">$' + (plan.maxAmount || 0).toLocaleString() + '</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Daily Return</span><span class="font-medium text-purple-600">' + (plan.dailyReturn || 0) + '%</span></div><div class="flex justify-between text-sm"><span class="text-gray-500">Duration</span><span class="font-medium">' + (plan.duration || 0) + ' days</span></div></div><div class="pt-4 border-t border-gray-100"><p class="text-xs text-gray-500">Created ' + dateStr + '</p></div></div>';
     }).join('') : '<p class="text-gray-500 col-span-3">No plans yet. Create your first investment plan!</p>';
 }
@@ -878,7 +1044,7 @@ function deletePlan(planId) {
 }
 
 function loadNotifications() {
-    db.collection('notifications').orderBy('createdAt', 'desc').get().then(function(snapshot) {
+    db.collection('notifications').get().then(function(snapshot) {
         notifications = [];
         snapshot.forEach(function(doc) { notifications.push({ id: doc.id, ...doc.data() }); });
         renderNotifications();
@@ -894,7 +1060,7 @@ function renderNotifications() {
     list.innerHTML = notifications.length ? notifications.map(function(notif) {
         var iconClass = notif.type === 'success' ? 'fa-check text-green-600' : notif.type === 'warning' ? 'fa-exclamation text-yellow-600' : 'fa-info text-blue-600';
         var bgClass = notif.type === 'success' ? 'bg-green-100' : notif.type === 'warning' ? 'bg-yellow-100' : 'bg-blue-100';
-        var dateStr = notif.createdAt ? new Date(notif.createdAt.toDate()).toLocaleString() : '-';
+        var dateStr = notif.createdAt && notif.createdAt.toDate ? new Date(notif.createdAt.toDate()).toLocaleString() : '-';
         return '<div class="bg-white rounded-xl border border-gray-200 p-4 card-hover"><div class="flex justify-between items-start"><div class="flex gap-3"><div class="w-10 h-10 rounded-full ' + bgClass + ' flex items-center justify-center"><i class="fas ' + iconClass + '"></i></div><div><h4 class="font-medium text-gray-800">' + (notif.title || 'Notification') + '</h4><p class="text-sm text-gray-500 mt-1">' + (notif.message || '') + '</p><p class="text-xs text-gray-400 mt-2">' + dateStr + '</p></div></div><button onclick="deleteNotification('' + notif.id + '')" class="text-gray-400 hover:text-red-500"><i class="fas fa-trash"></i></button></div></div>';
     }).join('') : '<p class="text-gray-500">No notifications yet</p>';
 }
@@ -968,27 +1134,6 @@ function loadSettings() {
         if (document.getElementById('minWithdrawal')) document.getElementById('minWithdrawal').value = s.minWithdrawal || 50;
     }
 }
-
-function initializeDemoData() {
-    db.collection('plans').get().then(function(snapshot) {
-        if (snapshot.empty) {
-            var defaultPlans = [
-                { name: 'Starter Plan', minAmount: 100, maxAmount: 999, dailyReturn: 2.5, duration: 30, createdAt: firebase.firestore.FieldValue.serverTimestamp() },
-                { name: 'Gold Plan', minAmount: 1000, maxAmount: 4999, dailyReturn: 3.5, duration: 45, createdAt: firebase.firestore.FieldValue.serverTimestamp() },
-                { name: 'Platinum Plan', minAmount: 5000, maxAmount: 50000, dailyReturn: 5, duration: 60, createdAt: firebase.firestore.FieldValue.serverTimestamp() }
-            ];
-            defaultPlans.forEach(function(plan) {
-                db.collection('plans').add(plan);
-            });
-        }
-    }).catch(function(e) {
-        console.log('Demo data init error:', e);
-    });
-}
-
-setTimeout(function() {
-    initializeDemoData();
-}, 3000);
 </script>
 </body>
 </html>
